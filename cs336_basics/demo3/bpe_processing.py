@@ -10,9 +10,59 @@ BPE（Byte Pair Encoding）分词器训练的完整代码实现
 """
 
 import regex as re
+import os
+import multiprocessing
 from collections import defaultdict
 
-def regex_pretokenize(text: str, special_tokens: list[str]) -> dict[tuple, int]:
+def find_split_points(input_path: str, nums_of_split: int, special_token: str) -> list[int]:
+    """
+    找到大文件的分割点，确保在每个分割点处都是完整的特殊标记
+
+    参数:
+        input_path: 输入文件路径
+        nums_of_split: 分割的块数（进程数量）
+        special_token: 用于分割的特殊标记
+
+    返回:
+        包含每个分割点偏移量的列表
+    """
+
+    file_size = os.path.getsize(input_path)
+
+    # 计算理论分割点
+    splits = [i * file_size // nums_of_split for i in range(nums_of_split + 1)]
+
+    actual_splits = [0]
+
+    special_token_bytes = special_token.encode('utf-8')
+
+    with open(input_path, 'rb') as f:
+        for i in range(1, nums_of_split):
+            # 定位到理论分割点
+            f.seek(splits[i])
+
+            # 读取足够的数据来查找特殊标记（这里读取 64 KB）
+            data = f.read(65535)
+
+            # 查找任意特殊标记的位置
+            pos = data.find(special_token_bytes)
+
+            if pos != -1:
+                # 找到特殊标记，计算实际分割点
+                actual_splits.append(splits[i] + pos)
+            else:
+                # 如果没找到特殊标记，寻找最近的换行符作为分割点
+                newline_pos = data.find(b'\n')
+                if newline_pos != -1:
+                    actual_splits.append(splits[i] + newline_pos + 1)  # 换行符后
+                else:
+                    actual_splits.append(splits[i])
+
+        actual_splits.append(file_size)
+
+    return actual_splits
+
+def regex_pretokenize(args: tuple[str, int, int, list[str]]) -> dict[tuple, int]:
     """
     预处理语料库：使用正则表达式进行预分词，转换为字节序列
 
@@ -29,6 +79,14 @@ def regex_pretokenize(text: str, special_tokens: list[str]) -> dict[tuple, int]:
     3. 将每个预 token 转换为 UTF-8 字节序列的元组
     4. 统计每个字节序列的出现频率
     """
+    input_path, start, end, special_tokens = args
+    with open(input_path, "rb") as f:  # 以二进制模式打开避免 UTF-8 解码问题
+        f.seek(start)
+        data = f.read(end - start)
+
+    # 确保在 UTF-8 字符边界处截断，使用错误处理
+    text = data.decode('utf-8', errors='ignore')
+
     delimiter = "|".join(map(re.escape, special_tokens))
     words = re.split(delimiter, text)
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
@@ -152,9 +210,20 @@ def train_bpe_tokenizer(
     for id, token in enumerate(special_tokens, start=256):
         vocabs[id] = token.encode('utf-8')
 
-    with open(input_path, "r", encoding="utf-8") as f: text = f.read()
+    split_points = find_split_points(input_path, multiprocessing.cpu_count(), "<|endoftext|>")
 
-    pre_token_freqs = regex_pretokenize(text, special_tokens)
+    args = []
+    for i in range(len(split_points) - 1):
+        args.append((input_path, split_points[i], split_points[i+1], special_tokens))
+
+    with multiprocessing.Pool() as pool:
+        pre_token_freqs_list = pool.map(regex_pretokenize, args)
+
+    pre_token_freqs = defaultdict(int)
+    # 按原始文件顺序逐段合并，确保与单进程版本一致
+    for freqs in pre_token_freqs_list:
+        for key, value in freqs.items():
+            pre_token_freqs[key] += value
 
     merges = []
     # 初始化统计信息，只计算一次
