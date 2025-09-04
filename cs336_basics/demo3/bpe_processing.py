@@ -212,25 +212,26 @@ def train_bpe_tokenizer(
 
     split_points = find_split_points(input_path, multiprocessing.cpu_count(), "<|endoftext|>")
 
-    args = []
-    for i in range(len(split_points) - 1):
-        args.append((input_path, split_points[i], split_points[i+1], special_tokens))
-
-    with multiprocessing.Pool() as pool:
-        pre_token_freqs_list = pool.map(regex_pretokenize, args)
+    args = [(input_path, split_points[i], split_points[i+1], special_tokens) for i in range(len(split_points) - 1)]
 
     pre_token_freqs = defaultdict(int)
-    # 按原始文件顺序逐段合并，确保与单进程版本一致
-    for freqs in pre_token_freqs_list:
-        for key, value in freqs.items():
-            pre_token_freqs[key] += value
+    with multiprocessing.Pool() as pool:
+        pre_iterator = pool.imap_unordered(regex_pretokenize, args)
+
+        for i, freqs in enumerate(pre_iterator):
+            for key, value in freqs.items():
+                pre_token_freqs[key] += value
+            print(f"  Processed and merged results from chunk {i+1}/{len(args)}...")
 
     merges = []
     # 初始化统计信息，只计算一次
     pair_freqs, pair_tokens = get_stats(pre_token_freqs)
+    print(f"Total unique pairs: {len(pair_freqs)}")
 
     num_merges = vocab_size - len(vocabs)
     for _ in range(num_merges):
+        if i % 100 == 0: # 每 100 次合并打印一次进度
+            print(f"  Merge iteration {i}/{num_merges}...")
         # 优化：一次遍历找到最频繁的字节对，考虑字典序
         top_pair = None
         max_freq = 0
