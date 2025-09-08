@@ -2,8 +2,8 @@
 对分词器的实验
 """
 
-from cs336_basics.demo3.tokenizer import Tokenizer
-from cs336_basics.demo3.train_bpe import analyze_performance
+from cs336_basics.BPE.demo3.tokenizer import Tokenizer
+from cs336_basics.BPE.demo3.train_bpe import analyze_performance
 import time, os
 from pathlib import Path
 import numpy as np

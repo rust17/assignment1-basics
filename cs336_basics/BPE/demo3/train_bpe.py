@@ -19,7 +19,7 @@ Processed and merged results from chunk 4/28...
 import time
 import psutil
 import pickle
-from cs336_basics.demo3.bpe_processing import train_bpe_tokenizer
+from cs336_basics.BPE.demo3.bpe_processing import train_bpe_tokenizer
 
 def analyze_performance(input_path: str, vocab_output_path: str, merges_output_pth: str):
     start = time.time()
